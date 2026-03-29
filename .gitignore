@@ -1,0 +1,18 @@
+# Environment variables — NEVER commit these
+.env
+.env.local
+.env*.local
+
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# OS
+.DS_Store
