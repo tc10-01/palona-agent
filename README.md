@@ -4,12 +4,6 @@ AI shopping assistant built for the Palona take-home. Handles general conversati
 
 ---
 
-## Demo
-
-*(Add demo GIF here)*
-
----
-
 ## Features
 
 - General conversation ("what can you do?", "what's your name?")
