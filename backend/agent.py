@@ -1,21 +1,20 @@
 """
 agent.py — The brain of the Palona commerce agent.
 
-Uses Gemini 2.0 Flash with function calling (tool use) to handle:
+Uses Gemini 2.5 Flash with function calling (tool use) to handle:
   1. General conversation ("What's your name?", "What can you do?")
   2. Text-based product search ("Recommend a t-shirt for sports")
   3. Image-based product search (user uploads a photo)
+  4. Product detail lookup by ID ("Tell me more about product X")
 
 A single agent decides which tool to call — no hardcoded routing.
 """
 
 import os
-import base64
 import json
 from typing import Optional
 import google.generativeai as genai
-from google.generativeai.types import content_types
-from catalog import search_products, get_all_categories
+from catalog import search_products, get_all_categories, get_product_by_id
 
 # ── Configure Gemini ──────────────────────────────────────────────────────────
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
@@ -29,15 +28,17 @@ Your capabilities:
 - Answer general questions about yourself and what you can do
 - Recommend products based on text descriptions (style, activity, budget, etc.)
 - Search for products based on images the user uploads
+- Look up full details for a specific product when the user asks for more info
 
 Product catalog categories: {", ".join(CATEGORIES)}
 
 Guidelines:
 - Be warm, concise, and helpful
-- When recommending products, briefly explain WHY each one fits the user's request
-- If no products match, suggest the user try different keywords
+- When your tool returns products, write 1-2 sentences max introducing them — do NOT list product names or prices in your text, the UI displays product cards automatically
+- If no products match, suggest the user try different keywords or a related category
 - Never make up products — only recommend items returned by your tools
-- Format product recommendations clearly with name and price
+- For general questions (name, capabilities), answer directly without calling any tool
+- When showing product details, summarize the key highlights naturally in 2-3 sentences
 """
 
 # ── Tool Definitions ──────────────────────────────────────────────────────────
@@ -90,6 +91,24 @@ tools = [
                     "required": ["image_description", "search_query"],
                 },
             },
+            {
+                "name": "get_product_details",
+                "description": (
+                    "Retrieve full details for a specific product by its ID. "
+                    "Use this when the user asks for more information about a specific product they've seen, "
+                    "or wants to know specs, materials, or full description of a product."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {
+                            "type": "string",
+                            "description": "The unique product ID (e.g. 'prod_001')",
+                        },
+                    },
+                    "required": ["product_id"],
+                },
+            },
         ]
     }
 ]
@@ -116,6 +135,12 @@ def execute_tool(tool_name: str, tool_args: dict) -> str:
             "image_description": tool_args["image_description"],
         })
 
+    elif tool_name == "get_product_details":
+        product = get_product_by_id(tool_args["product_id"])
+        if product is None:
+            return json.dumps({"error": f"No product found with id '{tool_args['product_id']}'"})
+        return json.dumps({"product": product})
+
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
@@ -125,7 +150,7 @@ def run_agent(
     history: list[dict],
     image_base64: Optional[str] = None,
     image_mime_type: str = "image/jpeg",
-) -> str:
+) -> tuple[str, list[dict]]:
     """
     Run one turn of the agent.
 
@@ -136,7 +161,7 @@ def run_agent(
         image_mime_type: MIME type of the image
 
     Returns:
-        Agent's text response
+        Tuple of (text response, list of product dicts found during this turn)
     """
     model = genai.GenerativeModel(
         model_name=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
@@ -158,6 +183,8 @@ def run_agent(
     # Combine history with new message
     messages = history + [{"role": "user", "parts": user_parts}]
 
+    found_products: list[dict] = []
+
     # ── Agentic loop: keep going until no more tool calls ──────────────────
     while True:
         response = model.generate_content(messages)
@@ -176,13 +203,22 @@ def run_agent(
                 part.text for part in content.parts
                 if hasattr(part, "text") and part.text
             ]
-            return "\n".join(text_parts)
+            return "\n".join(text_parts), found_products
 
         # Execute each tool call and collect results
         tool_results = []
         for part in tool_calls:
             fc = part.function_call
             tool_output = execute_tool(fc.name, dict(fc.args))
+            # Capture any products returned by this tool call
+            try:
+                parsed = json.loads(tool_output)
+                if "results" in parsed and parsed["results"]:
+                    found_products = parsed["results"]
+                elif "product" in parsed and parsed["product"]:
+                    found_products = [parsed["product"]]
+            except Exception:
+                pass
             tool_results.append({
                 "function_response": {
                     "name": fc.name,
