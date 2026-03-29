@@ -1,13 +1,3 @@
-"""
-main.py — FastAPI server exposing the Palona commerce agent API.
-
-Endpoints:
-  POST /chat          — Text-based conversation and product search
-  POST /chat/image    — Image + text for image-based product search
-  GET  /products      — Browse the full product catalog
-  GET  /health        — Health check
-"""
-
 import base64
 import json
 from contextlib import asynccontextmanager
@@ -24,17 +14,14 @@ from agent import run_agent
 from catalog import PRODUCTS, get_all_categories, ensure_embeddings
 
 
-# ── Startup / Shutdown ────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Build semantic search embeddings on startup (cached to disk after first run)."""
     import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, ensure_embeddings)
     yield
 
 
-# ── App Setup ──────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Palona Commerce Agent API",
     description="AI-powered shopping agent supporting text and image-based product search.",
@@ -44,16 +31,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Request / Response Models ─────────────────────────────────────────────────
 class ChatMessage(BaseModel):
-    role: str  # "user" or "assistant"
+    role: str
     content: str
 
 
@@ -68,9 +54,7 @@ class ChatResponse(BaseModel):
     products: list[dict] = []
 
 
-# ── History Helpers ───────────────────────────────────────────────────────────
 def to_agent_history(history: list[ChatMessage]) -> list[dict]:
-    """Convert API history format to Gemini message format."""
     result = []
     for msg in history:
         role = "model" if msg.role == "assistant" else msg.role
@@ -89,7 +73,6 @@ def append_to_history(
     ]
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
     return {"status": "ok", "agent": "Palona Commerce Agent"}
@@ -97,7 +80,6 @@ def health():
 
 @app.get("/products")
 def list_products(category: Optional[str] = None):
-    """Return all products, optionally filtered by category."""
     if category:
         filtered = [p for p in PRODUCTS if p["category"].lower() == category.lower()]
         return {"products": filtered, "total": len(filtered)}
@@ -111,25 +93,12 @@ def list_categories():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    """
-    Text-based conversation endpoint.
-    Handles general chat AND text-based product recommendations.
-    """
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     agent_history = to_agent_history(request.history)
-
-    response, products = run_agent(
-        message=request.message,
-        history=agent_history,
-    )
-
-    updated_history = append_to_history(
-        request.history,
-        request.message,
-        response,
-    )
+    response, products = run_agent(message=request.message, history=agent_history)
+    updated_history = append_to_history(request.history, request.message, response)
 
     return ChatResponse(response=response, history=updated_history, products=products)
 
@@ -140,10 +109,6 @@ async def chat_with_image(
     history: str = Form(default="[]"),
     file: UploadFile = File(...),
 ):
-    """
-    Image + text conversation endpoint.
-    User uploads an image; agent finds similar products in the catalog.
-    """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Uploaded file must be an image.")
 
@@ -151,25 +116,18 @@ async def chat_with_image(
     image_base64 = base64.b64encode(image_bytes).decode("utf-8")
 
     try:
-        history_data = json.loads(history)
-        parsed_history = [ChatMessage(**m) for m in history_data]
+        parsed_history = [ChatMessage(**m) for m in json.loads(history)]
     except Exception:
         parsed_history = []
 
     agent_history = to_agent_history(parsed_history)
-
     response, products = run_agent(
         message=message,
         history=agent_history,
         image_base64=image_base64,
         image_mime_type=file.content_type,
     )
-
-    updated_history = append_to_history(
-        parsed_history,
-        message,
-        response,
-    )
+    updated_history = append_to_history(parsed_history, message, response)
 
     return ChatResponse(response=response, history=updated_history, products=products)
 

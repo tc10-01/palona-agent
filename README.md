@@ -1,195 +1,128 @@
 # Palona Commerce Agent
 
-An AI-powered shopping assistant for a commerce website, built as part of the Palona AI take-home exercise.
-
-Inspired by [Amazon Rufus](https://www.aboutamazon.com/news/retail/amazon-rufus), this agent handles general conversation, text-based product recommendations, and image-based product search — all through a **single unified agent**.
+AI shopping assistant built for the Palona take-home. Handles general conversation, text search, and image-based search through a single Gemini agent with function calling — no hardcoded intent routing.
 
 ---
 
 ## Demo
 
-> 🎥 *(Add demo GIF here)*
+*(Add demo GIF here)*
 
 ---
 
 ## Features
 
-| Feature | Description |
-|---|---|
-| 💬 General conversation | "What's your name?", "What can you do?" |
-| 🔍 Text product search | "Recommend a t-shirt for sports", "Warm jacket under $100" |
-| 🖼️ Image product search | Upload a photo → agent finds similar items in the catalog |
-| 🗂️ Multi-turn memory | Conversation history preserved across turns |
-| 📎 Drag & drop images | Drop an image anywhere on the chat window |
+- General conversation ("what can you do?", "what's your name?")
+- Text-based product search with semantic ranking (not keyword matching)
+- Image upload — agent describes the item and finds similar products
+- Product detail lookup by ID
+- Conversation history persisted to localStorage across page reloads
+- Drag and drop image upload
 
 ---
 
-## Architecture
+## How it works
+
+The frontend sends messages to a FastAPI backend, which passes them to a Gemini agent. The agent decides which tool to call (or none, for general questions), executes it, and returns a response with any matched products.
 
 ```
-┌─────────────────────────────────────────┐
-│           Next.js Frontend              │
-│  ChatWindow · ImageUpload · Markdown    │
-└──────────────────┬──────────────────────┘
-                   │ HTTP (REST)
-┌──────────────────▼──────────────────────┐
-│           FastAPI Backend               │
-│   POST /chat   POST /chat/image         │
-│   GET  /products  GET /health           │
-└──────────────────┬──────────────────────┘
-                   │
-┌──────────────────▼──────────────────────┐
-│           Gemini Agent (agent.py)        │
-│                                         │
-│  System prompt + 2 registered tools     │
-│                                         │
-│  ┌─────────────────────────────────┐    │
-│  │ Tool: search_products_by_text   │    │
-│  │ Tool: search_products_by_image  │    │
-│  └──────────────┬──────────────────┘    │
-└─────────────────┼───────────────────────┘
-                  │
-┌─────────────────▼───────────────────────┐
-│        Product Catalog (catalog.py)      │
-│        25 products · JSON · keyword search│
-└─────────────────────────────────────────┘
+Next.js frontend
+      ↓ HTTP
+FastAPI backend  →  Gemini agent (gemini-2.5-flash)
+                         ↓ function calling
+                    search_products_by_text
+                    search_products_by_image
+                    get_product_details
+                         ↓
+                    catalog.py  (50 products, semantic search)
 ```
 
-### Why a single agent with tools?
-
-Rather than routing user intent with `if/elif` blocks, the agent uses **Gemini's function calling** (tool use). The model reads the user's message, decides which tool is appropriate, calls it, and synthesizes the result into a natural response.
-
-This means:
-- **No brittle intent classification** — the LLM handles ambiguity
-- **Composable** — new tools (e.g. `check_inventory`, `get_deals`) can be added without touching routing logic
-- **Natural multi-turn conversations** — the agent can ask clarifying questions before searching
-
-### Image search flow
-
-```
-User uploads image
-       ↓
-Gemini Vision describes the item (color, type, style)
-       ↓
-Tool: search_products_by_image(image_description, search_query)
-       ↓
-Keyword search over catalog tags + descriptions
-       ↓
-Gemini formats results, explains matches
-```
+Products are embedded once at startup using `text-embedding-004` and cached to `data/embeddings.json`. Search ranks results by cosine similarity. Falls back to keyword scoring if embeddings aren't available.
 
 ---
 
-## Tech Stack
+## Stack
 
-| Layer | Choice | Why |
-|---|---|---|
-| LLM | Gemini 2.0 Flash | Free tier, fast, native vision + function calling |
-| Backend | FastAPI (Python) | Auto OpenAPI docs, async, clean type hints |
-| Frontend | Next.js 14 + Tailwind | Production-grade React, easy Vercel deploy |
-| Catalog | JSON flat file | Simple, auditable, no DB overhead for a demo |
+- **LLM**: Gemini 2.5 Flash (vision + function calling)
+- **Embeddings**: text-embedding-004
+- **Backend**: FastAPI + Python
+- **Frontend**: Next.js 14 + Tailwind CSS
 
 ---
 
-## Running Locally
+## Running locally
 
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- A [Gemini API key](https://aistudio.google.com/app/apikey)
+- Gemini API key from [AI Studio](https://aistudio.google.com/app/apikey)
 
 ### Backend
 
 ```bash
 cd backend
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+```
 
-export GEMINI_API_KEY=your_key_here
+Create `backend/.env`:
+```
+GEMINI_API_KEY=your_key_here
+GEMINI_MODEL=gemini-2.5-flash
+```
+
+```bash
 python main.py
 ```
 
-API will be running at `http://localhost:8000`  
-Interactive docs at `http://localhost:8000/docs`
+First run computes embeddings for all 50 products (~30 seconds). After that it loads from cache instantly.
+
+API runs at `http://localhost:8000` — interactive docs at `/docs`.
 
 ### Frontend
 
 ```bash
 cd frontend
 npm install
-
-# Create .env.local
 echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
-
 npm run dev
 ```
 
-Frontend will be running at `http://localhost:3000`
+Frontend at `http://localhost:3000`.
 
 ---
 
-## API Reference
+## API
 
-### `POST /chat`
-Text-based conversation and product search.
-
-**Request:**
+### POST /chat
 ```json
-{
-  "message": "Recommend me a sports t-shirt",
-  "history": []
-}
+{ "message": "show me running shoes under $100", "history": [] }
 ```
 
-**Response:**
-```json
-{
-  "response": "Here are some great options for a sports t-shirt...",
-  "history": [
-    { "role": "user", "content": "Recommend me a sports t-shirt" },
-    { "role": "assistant", "content": "Here are some great options..." }
-  ]
-}
-```
+Returns `response` (text), `products` (array), `history` (updated).
 
-### `POST /chat/image`
-Image + text conversation. Sent as `multipart/form-data`.
+### POST /chat/image
+Multipart form: `file` (image), `message` (string), `history` (JSON string).
 
-| Field | Type | Description |
-|---|---|---|
-| `file` | File | Image to search by |
-| `message` | string | Optional text message |
-| `history` | JSON string | Serialized conversation history |
+### GET /products
+Full catalog. Optional `?category=` filter.
 
-### `GET /products`
-Returns the full product catalog. Accepts optional `?category=` filter.
+### GET /products/categories
+List of all categories.
 
-### `GET /health`
-Health check endpoint.
-
-Full interactive docs available at `/docs` when the backend is running.
-
----
-
-## Product Catalog
-
-25 curated products across 6 categories: clothing, footwear, bags, accessories, electronics, home, beauty.
-
-Each product has: name, category, subcategory, tags, price, colors, sizes, description, image URL.
+### GET /health
+Health check.
 
 ---
 
 ## Deployment
 
 ### Backend → Railway
-```bash
-# Add GEMINI_API_KEY as environment variable in Railway dashboard
-# Set start command to: uvicorn main:app --host 0.0.0.0 --port $PORT
-```
+- Root directory: `backend/`
+- Environment variable: `GEMINI_API_KEY`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
 ### Frontend → Vercel
-```bash
-# Set NEXT_PUBLIC_API_URL to your Railway backend URL
-vercel deploy
-```
+- Root directory: `frontend/`
+- Environment variable: `NEXT_PUBLIC_API_URL` → your Railway URL

@@ -1,22 +1,9 @@
-"""
-agent.py — The brain of the Palona commerce agent.
-
-Uses Gemini 2.5 Flash with function calling (tool use) to handle:
-  1. General conversation ("What's your name?", "What can you do?")
-  2. Text-based product search ("Recommend a t-shirt for sports")
-  3. Image-based product search (user uploads a photo)
-  4. Product detail lookup by ID ("Tell me more about product X")
-
-A single agent decides which tool to call — no hardcoded routing.
-"""
-
 import os
 import json
 from typing import Optional
 import google.generativeai as genai
 from catalog import search_products, get_all_categories, get_product_by_id
 
-# ── Configure Gemini ──────────────────────────────────────────────────────────
 genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 AGENT_NAME = "Palona Shop Assistant"
@@ -41,7 +28,6 @@ Guidelines:
 - When showing product details, summarize the key highlights naturally in 2-3 sentences
 """
 
-# ── Tool Definitions ──────────────────────────────────────────────────────────
 tools = [
     {
         "function_declarations": [
@@ -114,7 +100,6 @@ tools = [
 ]
 
 
-# ── Tool Execution ─────────────────────────────────────────────────────────────
 def execute_tool(tool_name: str, tool_args: dict) -> str:
     if tool_name == "search_products_by_text":
         results = search_products(
@@ -130,10 +115,7 @@ def execute_tool(tool_name: str, tool_args: dict) -> str:
         results = search_products(query=tool_args["search_query"])
         if not results:
             return json.dumps({"results": [], "message": "No similar products found in catalog."})
-        return json.dumps({
-            "results": results,
-            "image_description": tool_args["image_description"],
-        })
+        return json.dumps({"results": results, "image_description": tool_args["image_description"]})
 
     elif tool_name == "get_product_details":
         product = get_product_by_id(tool_args["product_id"])
@@ -144,32 +126,18 @@ def execute_tool(tool_name: str, tool_args: dict) -> str:
     return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
 
-# ── Main Agent Function ────────────────────────────────────────────────────────
 def run_agent(
     message: str,
     history: list[dict],
     image_base64: Optional[str] = None,
     image_mime_type: str = "image/jpeg",
 ) -> tuple[str, list[dict]]:
-    """
-    Run one turn of the agent.
-
-    Args:
-        message:        User's text message
-        history:        Prior conversation turns [{"role": "user"/"model", "parts": [...]}]
-        image_base64:   Optional base64-encoded image for image search
-        image_mime_type: MIME type of the image
-
-    Returns:
-        Tuple of (text response, list of product dicts found during this turn)
-    """
     model = genai.GenerativeModel(
         model_name=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
         system_instruction=SYSTEM_PROMPT,
         tools=tools,
     )
 
-    # Build current user message (text + optional image)
     user_parts = []
     if image_base64:
         user_parts.append({
@@ -180,37 +148,26 @@ def run_agent(
         })
     user_parts.append({"text": message})
 
-    # Combine history with new message
     messages = history + [{"role": "user", "parts": user_parts}]
-
     found_products: list[dict] = []
 
-    # ── Agentic loop: keep going until no more tool calls ──────────────────
     while True:
         response = model.generate_content(messages)
-        candidate = response.candidates[0]
-        content = candidate.content
+        content = response.candidates[0].content
 
-        # Check if the model wants to call a tool
         tool_calls = [
             part for part in content.parts
             if hasattr(part, "function_call") and part.function_call.name
         ]
 
         if not tool_calls:
-            # No tool call — extract final text response
-            text_parts = [
-                part.text for part in content.parts
-                if hasattr(part, "text") and part.text
-            ]
+            text_parts = [p.text for p in content.parts if hasattr(p, "text") and p.text]
             return "\n".join(text_parts), found_products
 
-        # Execute each tool call and collect results
         tool_results = []
         for part in tool_calls:
             fc = part.function_call
             tool_output = execute_tool(fc.name, dict(fc.args))
-            # Capture any products returned by this tool call
             try:
                 parsed = json.loads(tool_output)
                 if "results" in parsed and parsed["results"]:
@@ -226,6 +183,5 @@ def run_agent(
                 }
             })
 
-        # Append model response + tool results to message history and loop
         messages.append({"role": "model", "parts": content.parts})
         messages.append({"role": "user", "parts": tool_results})
