@@ -4,7 +4,7 @@ from typing import Optional
 import google.generativeai as genai
 from catalog import search_products, get_all_categories, get_product_by_id
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY", ""))
 
 AGENT_NAME = "Palona Shop Assistant"
 CATEGORIES = get_all_categories()
