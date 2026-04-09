@@ -17,8 +17,7 @@ from catalog import PRODUCTS, get_all_categories, ensure_embeddings
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, ensure_embeddings)
+    asyncio.get_event_loop().run_in_executor(None, ensure_embeddings)
     yield
 
 
