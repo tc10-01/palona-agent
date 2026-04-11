@@ -120,3 +120,13 @@ Health check.
 ### Frontend → Vercel
 - Root directory: `frontend/`
 - Environment variable: `NEXT_PUBLIC_API_URL` → your Railway URL
+
+---
+
+## Live demo
+
+Frontend: https://palona-agent.vercel.app
+
+Backend: https://palona-agent-production.up.railway.app
+
+If the hosted demo is unavailable, follow the local setup instructions above with your own Gemini API key from [AI Studio](https://aistudio.google.com/app/apikey).
