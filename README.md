@@ -127,6 +127,6 @@ Health check.
 
 Frontend: https://palona-agent.vercel.app
 
-Backend: https://palona-agent-production.up.railway.app
+Backend API docs: https://palona-agent-production.up.railway.app/docs
 
 If the hosted demo is unavailable, follow the local setup instructions above with your own Gemini API key from [AI Studio](https://aistudio.google.com/app/apikey).
